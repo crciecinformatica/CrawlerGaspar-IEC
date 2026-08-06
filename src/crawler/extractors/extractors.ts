@@ -128,7 +128,7 @@ export async function extractDescomplica(
 
   // Estratégia 1: Buscar sections/divs que contenham um h3 E um link para curso
   // Os cards reais da Descomplica geralmente são <section> com h3 + preço + botão matricular
-  const courseCardContainers: cheerio.Cheerio<cheerio.Element>[] = [];
+  const courseCardContainers: any[] = [];
 
   $("section, div").each((_, el) => {
     const $el = $(el);
@@ -237,7 +237,7 @@ export async function extractPucrs(url = PUCRS_URL): Promise<RawCourseOffer[]> {
   const globalPrices = extractPricesFromText(headerText + " " + $("body").text().slice(0, 2000));
 
   // Estratégia heurística (similar à Descomplica): sections/divs com h2/h3 e links de matrícula
-  const courseCardContainers: cheerio.Cheerio<cheerio.Element>[] = [];
+  const courseCardContainers: any[] = [];
   $("article, section, div, li").each((_, el) => {
     const $el = $(el);
     const hasTitle = $el.find("h2, h3, h4, [class*='title'], [class*='nome']").length > 0;
@@ -273,7 +273,12 @@ export async function extractPucrs(url = PUCRS_URL): Promise<RawCourseOffer[]> {
     
     let priceRaw = $card.find("[class*='price'], [class*='preco'], [class*='valor']").first().text().trim();
     const cardText = $card.text();
-    const prices = !priceRaw ? extractPricesFromText(cardText) : { priceRaw };
+    const prices = !priceRaw ? extractPricesFromText(cardText) : { 
+      priceRaw, 
+      discountPriceRaw: undefined as string | undefined, 
+      installmentsRaw: undefined as string | undefined, 
+      campaignName: undefined as string | undefined 
+    };
 
     const modality = detectModalityFromText(cardText) || "EAD";
     const href = $card.find("a[href*='/cursos/'], a[href*='/pos-graduacao/']").not("[href*='#']").first().attr("href");
