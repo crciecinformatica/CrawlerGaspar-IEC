@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { PageHeader } from "@/components/ui/page-header";
 import {
-  CheckCircle2, AlertCircle, Clock, RefreshCw, ChevronLeft, ChevronRight
+  CheckCircle2, AlertCircle, Clock, RefreshCw, ChevronLeft, ChevronRight, Eye, ExternalLink, Hash
 } from "lucide-react";
 
 interface CrawlRun {
@@ -57,6 +57,7 @@ export default function RunsPage() {
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
+  const [selectedRun, setSelectedRun] = useState<CrawlRun | null>(null);
   const limit = 20;
 
   async function load(p = 1) {
@@ -103,7 +104,7 @@ export default function RunsPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50">
-                {["Concorrente", "Fonte", "Status", "Início", "Duração", "Encontradas", "Novas", "Alteradas", "Erro"].map((h) => (
+                {["Concorrente", "Fonte", "Status", "Início", "Duração", "Ação"].map((h) => (
                   <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide whitespace-nowrap">
                     {h}
                   </th>
@@ -146,27 +147,14 @@ export default function RunsPage() {
                       <td className="px-4 py-2.5 whitespace-nowrap text-xs text-slate-500 dark:text-slate-400 tabular-nums">
                         {formatDuration(run.durationMs)}
                       </td>
-                      <td className="px-4 py-2.5 whitespace-nowrap text-xs text-slate-700 dark:text-slate-300 tabular-nums text-center">
-                        {run.offersFound}
-                      </td>
-                      <td className="px-4 py-2.5 whitespace-nowrap text-xs tabular-nums text-center">
-                        <span className={run.offersNew > 0 ? "text-emerald-600 dark:text-emerald-400 font-semibold" : "text-slate-400"}>
-                          +{run.offersNew}
-                        </span>
-                      </td>
-                      <td className="px-4 py-2.5 whitespace-nowrap text-xs tabular-nums text-center">
-                        <span className={run.offersChanged > 0 ? "text-amber-600 dark:text-amber-400 font-semibold" : "text-slate-400"}>
-                          ~{run.offersChanged}
-                        </span>
-                      </td>
-                      <td className="px-4 py-2.5 max-w-[200px]">
-                        {run.errorMessage ? (
-                          <span className="text-xs text-red-500 truncate block" title={run.errorMessage}>
-                            {run.errorMessage.slice(0, 60)}
-                          </span>
-                        ) : (
-                          <span className="text-slate-300 dark:text-slate-600">—</span>
-                        )}
+                      <td className="px-4 py-2.5 whitespace-nowrap">
+                        <button
+                          onClick={() => setSelectedRun(run)}
+                          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition"
+                        >
+                          <Eye className="h-3.5 w-3.5" />
+                          Detalhes
+                        </button>
                       </td>
                     </tr>
                   );
@@ -199,6 +187,63 @@ export default function RunsPage() {
           </div>
         </div>
       </div>
+      {selectedRun && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xl w-full max-w-xl overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="p-6">
+              <div className="flex items-start justify-between mb-6">
+                <div>
+                  <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-1">
+                    Detalhes da Execução
+                  </h3>
+                  <p className="text-sm text-slate-500">{selectedRun.source.competitor.name}</p>
+                </div>
+                <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-semibold ${STATUS_CONFIG[selectedRun.status]?.className || STATUS_CONFIG.PENDING.className}`}>
+                  {STATUS_CONFIG[selectedRun.status]?.icon || STATUS_CONFIG.PENDING.icon}
+                  {STATUS_CONFIG[selectedRun.status]?.label || STATUS_CONFIG.PENDING.label}
+                </span>
+              </div>
+              
+              <div className="grid grid-cols-2 gap-4 mb-6">
+                <div className="bg-slate-50 dark:bg-slate-800/50 p-3 rounded-lg">
+                  <span className="text-xs font-medium text-slate-400 uppercase tracking-wider block mb-1">Início</span>
+                  <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">{new Date(selectedRun.startedAt).toLocaleString("pt-BR")}</p>
+                </div>
+                <div className="bg-slate-50 dark:bg-slate-800/50 p-3 rounded-lg">
+                  <span className="text-xs font-medium text-slate-400 uppercase tracking-wider block mb-1">Duração</span>
+                  <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">{formatDuration(selectedRun.durationMs)}</p>
+                </div>
+                <div className="bg-slate-50 dark:bg-slate-800/50 p-3 rounded-lg">
+                  <span className="text-xs font-medium text-slate-400 uppercase tracking-wider block mb-1">Ofertas Encontradas</span>
+                  <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">{selectedRun.offersFound}</p>
+                </div>
+                <div className="bg-slate-50 dark:bg-slate-800/50 p-3 rounded-lg">
+                  <span className="text-xs font-medium text-slate-400 uppercase tracking-wider block mb-1">Novas / Alteradas</span>
+                  <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">
+                    <span className="text-emerald-500">+{selectedRun.offersNew}</span> / <span className="text-amber-500">~{selectedRun.offersChanged}</span>
+                  </p>
+                </div>
+              </div>
+
+              {selectedRun.errorMessage && (
+                <div className="bg-red-50 dark:bg-red-950/30 border border-red-100 dark:border-red-900 rounded-lg p-4 mb-6">
+                  <h4 className="text-xs font-semibold text-red-800 dark:text-red-400 uppercase tracking-wider mb-2">Mensagem de Erro</h4>
+                  <p className="text-sm text-red-600 dark:text-red-300 whitespace-pre-wrap font-mono break-all">{selectedRun.errorMessage}</p>
+                </div>
+              )}
+              
+              <div className="flex items-center justify-between pt-4 border-t border-slate-100 dark:border-slate-800">
+                <a href={selectedRun.source.url} target="_blank" rel="noopener noreferrer" className="text-sm font-medium text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1.5">
+                  <ExternalLink className="h-3.5 w-3.5" /> Acessar Fonte Original
+                </a>
+                <button onClick={() => setSelectedRun(null)} className="px-4 py-2 text-sm font-medium bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-900 dark:text-white rounded-lg transition">
+                  Fechar
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

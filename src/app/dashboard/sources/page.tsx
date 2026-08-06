@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { PageHeader } from "@/components/ui/page-header";
 import { StatusBadge } from "@/components/ui/status-badge";
-import { Globe, Play, RefreshCw, AlertCircle, CheckCircle2, Clock } from "lucide-react";
+import { Globe, Play, RefreshCw, AlertCircle, CheckCircle2, Clock, Eye, ExternalLink } from "lucide-react";
 
 interface Source {
   id: string;
@@ -30,6 +30,7 @@ export default function SourcesPage() {
   const [sources, setSources] = useState<Source[]>([]);
   const [loading, setLoading] = useState(true);
   const [runningIds, setRunningIds] = useState<Set<string>>(new Set());
+  const [selectedSource, setSelectedSource] = useState<Source | null>(null);
 
   async function loadSources() {
     setLoading(true);
@@ -113,7 +114,7 @@ export default function SourcesPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50">
-                  {["Fonte", "Concorrente", "Tipo", "Freq.", "Último Run", "Duração", "Ofertas", "Ação"].map((h) => (
+                  {["Fonte", "Concorrente", "Último Status", "Ações"].map((h) => (
                     <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide whitespace-nowrap">
                       {h}
                     </th>
@@ -138,54 +139,38 @@ export default function SourcesPage() {
                         {src.competitor.name}
                       </td>
                       <td className="px-4 py-3 whitespace-nowrap">
-                        <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold ${fetcherColors[src.fetcherType] ?? ""}`}>
-                          {src.fetcherType}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 whitespace-nowrap text-xs text-slate-500 dark:text-slate-400">
-                        {src.frequency}
-                      </td>
-                      <td className="px-4 py-3 whitespace-nowrap">
                         <div className="flex items-center gap-1.5">
                           {statusIcon(lastRun?.status)}
                           <span className={`text-xs ${lastRun?.status === "ERROR" ? "text-red-500" : "text-slate-500 dark:text-slate-400"}`}>
                             {lastRun
                               ? lastRun.status === "ERROR"
-                                ? (lastRun.errorMessage?.slice(0, 40) ?? "Erro")
+                                ? "Erro na Coleta"
                                 : new Date(lastRun.startedAt).toLocaleString("pt-BR")
                               : "Nunca executado"}
                           </span>
                         </div>
                       </td>
-                      <td className="px-4 py-3 whitespace-nowrap text-xs text-slate-500 dark:text-slate-400 tabular-nums">
-                        {formatDuration(lastRun?.durationMs)}
-                      </td>
-                      <td className="px-4 py-3 whitespace-nowrap text-xs tabular-nums">
-                        {lastRun ? (
-                          <span className="text-slate-600 dark:text-slate-300">
-                            {lastRun.offersFound} encontradas{" "}
-                            {lastRun.offersNew > 0 && (
-                              <span className="text-emerald-600 dark:text-emerald-400">+{lastRun.offersNew}</span>
-                            )}
-                            {lastRun.offersChanged > 0 && (
-                              <span className="ml-1 text-amber-600 dark:text-amber-400">~{lastRun.offersChanged}</span>
-                            )}
-                          </span>
-                        ) : "—"}
-                      </td>
                       <td className="px-4 py-3 whitespace-nowrap">
-                        <button
-                          onClick={() => triggerCrawl(src.id)}
-                          disabled={isRunning}
-                          className="flex items-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-1.5 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-blue-50 hover:border-blue-300 hover:text-blue-700 dark:hover:bg-blue-950 dark:hover:text-blue-300 disabled:opacity-50 disabled:cursor-not-allowed transition"
-                        >
-                          {isRunning ? (
-                            <RefreshCw className="h-3 w-3 animate-spin" />
-                          ) : (
-                            <Play className="h-3 w-3" />
-                          )}
-                          {isRunning ? "Executando…" : "Executar"}
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => setSelectedSource(src)}
+                            className="flex items-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-1.5 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+                          >
+                            <Eye className="h-3.5 w-3.5" /> Detalhes
+                          </button>
+                          <button
+                            onClick={() => triggerCrawl(src.id)}
+                            disabled={isRunning}
+                            className="flex items-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-1.5 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-blue-50 hover:border-blue-300 hover:text-blue-700 dark:hover:bg-blue-950 dark:hover:text-blue-300 disabled:opacity-50 disabled:cursor-not-allowed transition"
+                          >
+                            {isRunning ? (
+                              <RefreshCw className="h-3 w-3 animate-spin" />
+                            ) : (
+                              <Play className="h-3 w-3" />
+                            )}
+                            {isRunning ? "Executando…" : "Executar"}
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -195,6 +180,73 @@ export default function SourcesPage() {
           </div>
           <div className="flex items-center px-4 py-3 border-t border-slate-50 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/20">
             <p className="text-xs text-slate-500 dark:text-slate-400">{sources.length} fontes configuradas</p>
+          </div>
+        </div>
+      )}
+      {selectedSource && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xl w-full max-w-xl overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="p-6">
+              <div className="flex items-start justify-between mb-6">
+                <div>
+                  <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-1">
+                    Detalhes da Fonte
+                  </h3>
+                  <p className="text-sm text-slate-500">{selectedSource.competitor.name}</p>
+                </div>
+                <span className={`inline-flex items-center px-2 py-1 rounded-md text-xs font-semibold ${fetcherColors[selectedSource.fetcherType] ?? ""}`}>
+                  {selectedSource.fetcherType}
+                </span>
+              </div>
+              
+              <div className="grid grid-cols-2 gap-4 mb-6">
+                <div className="bg-slate-50 dark:bg-slate-800/50 p-3 rounded-lg">
+                  <span className="text-xs font-medium text-slate-400 uppercase tracking-wider block mb-1">Nome (Label)</span>
+                  <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">{selectedSource.label}</p>
+                </div>
+                <div className="bg-slate-50 dark:bg-slate-800/50 p-3 rounded-lg">
+                  <span className="text-xs font-medium text-slate-400 uppercase tracking-wider block mb-1">Frequência</span>
+                  <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">{selectedSource.frequency}</p>
+                </div>
+              </div>
+
+              {selectedSource.crawlRuns?.[0] && (
+                <div className="border-t border-slate-100 dark:border-slate-800 pt-5 mb-6">
+                  <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-4">Última Execução</h4>
+                  <div className="grid grid-cols-3 gap-4">
+                    <div>
+                      <span className="text-xs text-slate-500 block mb-1">Ofertas Encontradas</span>
+                      <p className="font-semibold text-slate-700 dark:text-slate-300">{selectedSource.crawlRuns[0].offersFound}</p>
+                    </div>
+                    <div>
+                      <span className="text-xs text-slate-500 block mb-1">Novas / Alteradas</span>
+                      <p className="font-semibold text-emerald-600 dark:text-emerald-400">
+                        +{selectedSource.crawlRuns[0].offersNew} <span className="text-amber-500">~{selectedSource.crawlRuns[0].offersChanged}</span>
+                      </p>
+                    </div>
+                    <div>
+                      <span className="text-xs text-slate-500 block mb-1">Duração</span>
+                      <p className="font-semibold text-slate-700 dark:text-slate-300">{formatDuration(selectedSource.crawlRuns[0].durationMs)}</p>
+                    </div>
+                  </div>
+                  {selectedSource.crawlRuns[0].errorMessage && (
+                    <div className="mt-4 p-3 bg-red-50 dark:bg-red-950/30 rounded-lg">
+                      <span className="text-xs text-red-800 dark:text-red-400 font-semibold uppercase block mb-1">Mensagem de Erro</span>
+                      <p className="text-xs text-red-600 dark:text-red-300 font-mono break-all">{selectedSource.crawlRuns[0].errorMessage}</p>
+                    </div>
+                  )}
+                </div>
+              )}
+              
+              <div className="flex items-center justify-between pt-4 border-t border-slate-100 dark:border-slate-800">
+                <a href={selectedSource.url} target="_blank" rel="noopener noreferrer" className="text-sm font-medium text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1.5">
+                  <ExternalLink className="h-3.5 w-3.5" /> Acessar URL
+                </a>
+                <button onClick={() => setSelectedSource(null)} className="px-4 py-2 text-sm font-medium bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-900 dark:text-white rounded-lg transition">
+                  Fechar
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
