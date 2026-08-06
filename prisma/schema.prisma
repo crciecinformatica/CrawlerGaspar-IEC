@@ -1,0 +1,190 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+
+// ──────────────────────────────────────────────
+// RBAC
+// ──────────────────────────────────────────────
+enum Role {
+  ADMIN
+  ANALYST
+  VIEWER
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  name      String
+  role      Role     @default(VIEWER)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ──────────────────────────────────────────────
+// CONCORRENTES
+// ──────────────────────────────────────────────
+model Competitor {
+  id          String   @id @default(uuid())
+  slug        String   @unique   // ex: "pucrs", "fgv"
+  name        String             // ex: "PUCRS Online"
+  website     String?
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  sources     Source[]
+  offers      CourseOffer[]
+
+  @@map("competitors")
+}
+
+// ──────────────────────────────────────────────
+// FONTES (URLs/endpoints monitorados)
+// ──────────────────────────────────────────────
+enum FetcherType {
+  HTTP       // fetch simples + Cheerio
+  BROWSER    // Playwright para páginas dinâmicas
+  API        // endpoint JSON direto
+}
+
+enum SourceFrequency {
+  HOURLY
+  DAILY
+  WEEKLY
+}
+
+model Source {
+  id            String          @id @default(uuid())
+  competitorId  String
+  competitor    Competitor      @relation(fields: [competitorId], references: [id])
+  url           String
+  label         String          // descrição humana
+  fetcherType   FetcherType     @default(HTTP)
+  frequency     SourceFrequency @default(WEEKLY)
+  active        Boolean         @default(true)
+  createdAt     DateTime        @default(now())
+
+  crawlRuns     CrawlRun[]
+
+  @@map("sources")
+}
+
+// ──────────────────────────────────────────────
+// EXECUÇÕES DE CRAWLER
+// ──────────────────────────────────────────────
+enum CrawlStatus {
+  PENDING
+  RUNNING
+  SUCCESS
+  ERROR
+  PARTIAL
+}
+
+model CrawlRun {
+  id              String      @id @default(uuid())
+  sourceId        String
+  source          Source      @relation(fields: [sourceId], references: [id])
+  status          CrawlStatus @default(PENDING)
+  startedAt       DateTime    @default(now())
+  finishedAt      DateTime?
+  durationMs      Int?
+  contentHash     String?     // MD5 do HTML/JSON retornado
+  offersFound     Int         @default(0)
+  offersNew       Int         @default(0)
+  offersChanged   Int         @default(0)
+  errorMessage    String?
+  evidencePath    String?     // caminho para HTML/screenshot salvo
+
+  offers          CourseOffer[]
+
+  @@map("crawl_runs")
+}
+
+// ──────────────────────────────────────────────
+// OFERTAS DE CURSOS (normalizado)
+// ──────────────────────────────────────────────
+enum Modality {
+  EAD
+  PRESENCIAL
+  HIBRIDO
+  DESCONHECIDO
+}
+
+model CourseOffer {
+  id                  String     @id @default(uuid())
+  competitorId        String
+  competitor          Competitor @relation(fields: [competitorId], references: [id])
+  crawlRunId          String
+  crawlRun            CrawlRun   @relation(fields: [crawlRunId], references: [id])
+
+  // Identificação
+  sourceUrl           String
+  courseKey           String     // hash estável: slug(competitor) + slug(title)
+  title               String
+  area                String?
+  modality            Modality   @default(DESCONHECIDO)
+  durationMonths      Int?
+
+  // Preço
+  fullPrice           Float?
+  discountPrice       Float?
+  installments        Int?
+  installmentValue    Float?
+  isPriceHidden       Boolean    @default(false)
+
+  // Campanha / Comercial
+  campaignName        String?
+  campaignDeadline    DateTime?
+  enrollmentOpen      Boolean    @default(true)
+  startDate           DateTime?
+
+  // Conteúdo
+  workloadHours       Int?
+  description         String?
+
+  // Qualidade da extração
+  confidenceScore     Float      @default(0.5)  // 0-1
+  priceEvidence       String?    // texto bruto do preço na página
+  campaignEvidence    String?    // texto bruto da campanha
+
+  // Timestamps
+  scrapedAt           DateTime   @default(now())
+  isLatest            Boolean    @default(true)  // apenas a oferta mais recente por courseKey
+
+  changeEvents        OfferChangeEvent[]
+
+  @@index([courseKey])
+  @@index([competitorId, isLatest])
+  @@map("course_offers")
+}
+
+// ──────────────────────────────────────────────
+// EVENTOS DE MUDANÇA
+// ──────────────────────────────────────────────
+enum ChangeType {
+  PRICE_CHANGE
+  CAMPAIGN_ADDED
+  CAMPAIGN_REMOVED
+  ENROLLMENT_OPENED
+  ENROLLMENT_CLOSED
+  NEW_COURSE
+  COURSE_REMOVED
+}
+
+model OfferChangeEvent {
+  id            String      @id @default(uuid())
+  offerId       String
+  offer         CourseOffer @relation(fields: [offerId], references: [id])
+  changeType    ChangeType
+  fieldName     String?
+  oldValue      String?
+  newValue      String?
+  detectedAt    DateTime    @default(now())
+
+  @@map("offer_change_events")
+}
