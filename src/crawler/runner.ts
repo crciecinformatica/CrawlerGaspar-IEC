@@ -1,12 +1,6 @@
 import { prisma } from "../lib/prisma";
 import { RawCourseOffer, NormalizedCourseOffer } from "./extractors/base";
 import {
-  extractDescomplica,
-  extractPucrs,
-  extractPucpr,
-  extractFgv,
-} from "./extractors/extractors";
-import {
   normalizePrice,
   extractFullPrice,
   normalizeInstallments,
@@ -19,25 +13,32 @@ import {
   inferArea,
 } from "./normalizer";
 import { detectChanges } from "./differ";
+import { LogLevel, log } from "@crawlee/core";
+import { PlaywrightCrawler } from "@crawlee/playwright";
+import {
+  handleDescomplica,
+  handleFgv,
+  handlePucpr,
+  handlePucrs,
+} from "./crawlee-handlers";
 
-// Mapa slug → função extratora
-const EXTRACTORS: Record<string, (url: string) => Promise<RawCourseOffer[]>> = {
-  descomplica: extractDescomplica,
-  pucrs: extractPucrs,
-  pucpr: extractPucpr,
-  fgv: extractFgv,
+// Desabilitar logs massivos do Crawlee no console
+log.setLevel(LogLevel.WARNING);
+
+// Mapa slug → handler do Crawlee
+const HANDLERS: Record<string, any> = {
+  descomplica: handleDescomplica,
+  pucrs: handlePucrs,
+  pucpr: handlePucpr,
+  fgv: handleFgv,
 };
 
-/**
- * Normaliza uma oferta bruta para o formato canônico
- */
 function normalizeOffer(
   raw: RawCourseOffer,
   competitorSlug: string
 ): NormalizedCourseOffer {
   const priceHidden = detectHiddenPrice(raw.priceRaw ?? "");
   
-  // Extrair preço cheio e com desconto
   const allPriceText = [raw.priceRaw, raw.discountPriceRaw, raw.installmentsRaw]
     .filter(Boolean)
     .join(" ");
@@ -45,10 +46,7 @@ function normalizeOffer(
   let fullPrice = extractFullPrice(allPriceText) ?? normalizePrice(raw.priceRaw);
   let discountPrice = normalizePrice(raw.discountPriceRaw);
   
-  // Se temos raw.priceRaw com padrão "De X por Y", normalizePrice retorna o menor (desconto)
-  // e extractFullPrice retorna o maior (cheio)
   if (fullPrice && discountPrice && discountPrice >= fullPrice) {
-    // Swap se estão invertidos
     [fullPrice, discountPrice] = [discountPrice, fullPrice];
   }
 
@@ -56,7 +54,6 @@ function normalizeOffer(
     raw.installmentsRaw ?? raw.priceRaw
   );
 
-  // Se não temos preço mas temos parcelas, calcular preço total
   if (!fullPrice && installments && installmentValue) {
     fullPrice = installments * installmentValue;
   }
@@ -85,9 +82,6 @@ function normalizeOffer(
   };
 }
 
-/**
- * Persiste ofertas no banco, detectando mudanças
- */
 async function persistOffers(
   offers: NormalizedCourseOffer[],
   competitorId: string,
@@ -97,7 +91,6 @@ async function persistOffers(
   let changed = 0;
 
   for (const offer of offers) {
-    // Buscar oferta anterior com mesmo courseKey
     const previous = await prisma.courseOffer.findFirst({
       where: { courseKey: offer.courseKey, isLatest: true },
     });
@@ -105,7 +98,6 @@ async function persistOffers(
     const changes = detectChanges(previous, offer);
 
     if (changes.length > 0 || !previous) {
-      // Marcar anterior como não-latest
       if (previous) {
         await prisma.courseOffer.update({
           where: { id: previous.id },
@@ -116,7 +108,6 @@ async function persistOffers(
         created++;
       }
 
-      // Criar nova oferta
       const newOffer = await prisma.courseOffer.create({
         data: {
           competitorId,
@@ -145,7 +136,6 @@ async function persistOffers(
         },
       });
 
-      // Registrar eventos de mudança
       for (const change of changes) {
         await prisma.offerChangeEvent.create({
           data: {
@@ -174,9 +164,6 @@ export interface RunResult {
   errorMessage?: string;
 }
 
-/**
- * Executa crawler para uma fonte específica
- */
 export async function runCrawlerForSource(sourceId: string): Promise<RunResult> {
   const source = await prisma.source.findUnique({
     where: { id: sourceId },
@@ -192,13 +179,29 @@ export async function runCrawlerForSource(sourceId: string): Promise<RunResult> 
   const startedAt = Date.now();
 
   try {
-    const extractor = EXTRACTORS[source.competitor.slug];
-    if (!extractor) {
+    const handler = HANDLERS[source.competitor.slug];
+    if (!handler) {
       throw new Error(`Nenhum extrator definido para "${source.competitor.slug}"`);
     }
 
-    console.log(`\n[Runner] Crawling: ${source.competitor.name} → ${source.url}`);
-    const rawOffers = await extractor(source.url);
+    console.log(`\n[Runner] Crawling com Crawlee: ${source.competitor.name} → ${source.url}`);
+
+    const rawOffers: RawCourseOffer[] = [];
+
+    const crawler = new PlaywrightCrawler({
+      requestHandler: async (context) => {
+        // Redefinir pushData para capturar as ofertas em memória
+        context.pushData = async (data: any) => {
+          rawOffers.push(data as RawCourseOffer);
+        };
+        await handler(context);
+      },
+      maxRequestsPerCrawl: 50,
+      navigationTimeoutSecs: 60,
+      requestHandlerTimeoutSecs: 120,
+    });
+
+    await crawler.run([source.url]);
 
     const normalized = rawOffers
       .map((r) => {
@@ -269,9 +272,6 @@ export async function runCrawlerForSource(sourceId: string): Promise<RunResult> 
   }
 }
 
-/**
- * Executa crawler para todas as fontes ativas
- */
 export async function runAllActiveSources(): Promise<RunResult[]> {
   const sources = await prisma.source.findMany({
     where: { active: true },

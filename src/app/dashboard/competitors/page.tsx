@@ -3,7 +3,12 @@
 import { useEffect, useState } from "react";
 import { PageHeader } from "@/components/ui/page-header";
 import { StatusBadge } from "@/components/ui/status-badge";
-import { Play, RefreshCw, ExternalLink, CheckCircle2, AlertCircle, Clock } from "lucide-react";
+import { Play, RefreshCw, ExternalLink, CheckCircle2, AlertCircle, Clock, Plus, Pencil, Trash2 } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { CompetitorForm, CompetitorFormValues } from "./competitor-form";
+import Link from "next/link";
+import { toast } from "sonner";
+import { deleteCompetitor } from "@/app/actions/competitors";
 
 interface Competitor {
   id: string;
@@ -33,6 +38,8 @@ export default function CompetitorsPage() {
   const [competitors, setCompetitors] = useState<Competitor[]>([]);
   const [loading, setLoading] = useState(true);
   const [runningIds, setRunningIds] = useState<Set<string>>(new Set());
+  const [isFormOpen, setIsFormOpen] = useState(false);
+  const [editingCompetitor, setEditingCompetitor] = useState<Competitor | null>(null);
 
   async function load() {
     setLoading(true);
@@ -64,6 +71,27 @@ export default function CompetitorsPage() {
     });
   }
 
+  const handleDelete = async (id: string) => {
+    if (!confirm("Tem certeza que deseja excluir este concorrente?")) return;
+    try {
+      await deleteCompetitor(id);
+      toast.success("Concorrente excluído com sucesso.");
+      load();
+    } catch (error: any) {
+      toast.error(error.message || "Erro ao excluir concorrente.");
+    }
+  };
+
+  const openNewForm = () => {
+    setEditingCompetitor(null);
+    setIsFormOpen(true);
+  };
+
+  const openEditForm = (comp: Competitor) => {
+    setEditingCompetitor(comp);
+    setIsFormOpen(true);
+  };
+
   function statusLabel(status?: string) {
     if (!status) return "Nunca executado";
     if (status === "SUCCESS") return "Ativo";
@@ -78,7 +106,37 @@ export default function CompetitorsPage() {
         title="Concorrentes"
         description="Instituições monitoradas pelo robô de extração de dados."
         total={competitors.length}
-      />
+      >
+        <button
+          onClick={openNewForm}
+          className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 transition shadow-sm"
+        >
+          <Plus className="h-4 w-4" />
+          Novo Concorrente
+        </button>
+      </PageHeader>
+
+      <Dialog open={isFormOpen} onOpenChange={setIsFormOpen}>
+        <DialogContent className="sm:max-w-[425px] bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 rounded-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-slate-900 dark:text-white">
+              {editingCompetitor ? "Editar Concorrente" : "Novo Concorrente"}
+            </DialogTitle>
+          </DialogHeader>
+          <CompetitorForm
+            initialData={
+              editingCompetitor
+                ? { ...editingCompetitor, website: editingCompetitor.website || "" }
+                : undefined
+            }
+            onSuccess={() => {
+              setIsFormOpen(false);
+              load();
+            }}
+            onCancel={() => setIsFormOpen(false)}
+          />
+        </DialogContent>
+      </Dialog>
 
       {loading ? (
         <div className="flex items-center justify-center min-h-[200px]">
@@ -111,7 +169,9 @@ export default function CompetitorsPage() {
                       <tr key={comp.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
                         <td className="px-4 py-3 whitespace-nowrap">
                           <div className="flex items-center gap-2">
-                            <p className="text-sm font-semibold text-slate-800 dark:text-slate-200">{comp.name}</p>
+                            <Link href={`/dashboard/competitors/${comp.id}`} className="text-sm font-semibold text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 transition hover:underline">
+                              {comp.name}
+                            </Link>
                             {comp.website && (
                               <a href={comp.website} target="_blank" rel="noopener noreferrer"
                                 className="text-slate-400 hover:text-blue-500 transition">
@@ -141,18 +201,34 @@ export default function CompetitorsPage() {
                           <StatusBadge value={statusLabel(comp.lastCrawl?.status)} />
                         </td>
                         <td className="px-4 py-3 whitespace-nowrap">
-                          <button
-                            onClick={() => crawlAll(comp.id)}
-                            disabled={isRunning || comp.sourcesCount === 0}
-                            className="flex items-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-1.5 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-blue-50 hover:border-blue-300 hover:text-blue-700 dark:hover:bg-blue-950 dark:hover:text-blue-300 disabled:opacity-50 disabled:cursor-not-allowed transition"
-                          >
-                            {isRunning ? (
-                              <RefreshCw className="h-3 w-3 animate-spin" />
-                            ) : (
-                              <Play className="h-3 w-3" />
-                            )}
-                            {isRunning ? "Coletando…" : "Coletar"}
-                          </button>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => crawlAll(comp.id)}
+                              disabled={isRunning || comp.sourcesCount === 0}
+                              className="flex items-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-1.5 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-blue-50 hover:border-blue-300 hover:text-blue-700 dark:hover:bg-blue-950 dark:hover:text-blue-300 disabled:opacity-50 disabled:cursor-not-allowed transition"
+                              title="Coletar"
+                            >
+                              {isRunning ? (
+                                <RefreshCw className="h-3 w-3 animate-spin" />
+                              ) : (
+                                <Play className="h-3 w-3" />
+                              )}
+                            </button>
+                            <button
+                              onClick={() => openEditForm(comp)}
+                              className="flex items-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-700 p-1.5 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-slate-100 transition"
+                              title="Editar"
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              onClick={() => handleDelete(comp.id)}
+                              className="flex items-center gap-1.5 rounded-lg border border-red-200 dark:border-red-900 p-1.5 text-xs font-medium text-red-600 dark:text-red-400 hover:bg-red-50 hover:text-red-700 dark:hover:bg-red-950/50 dark:hover:text-red-300 transition"
+                              title="Excluir"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     );
