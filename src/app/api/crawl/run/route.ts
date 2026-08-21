@@ -1,20 +1,33 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { runCrawlerForSource, runAllActiveSources } from "@/crawler/runner";
+import { exec } from "child_process";
+import { promisify } from "util";
+
+const execAsync = promisify(exec);
 
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}));
   const { sourceId, all } = body as { sourceId?: string; all?: boolean };
 
   if (all) {
-    // Dispara todos de forma assíncrona (fire-and-forget para MVP)
-    const results = await runAllActiveSources();
-    return NextResponse.json({ results });
+    // Fire and forget, or wait for it. We will wait so UI can poll correctly.
+    try {
+      await execAsync("npx tsx src/crawler/cli.ts");
+      return NextResponse.json({ message: "SUCCESS" });
+    } catch (e: any) {
+      console.error("Erro na execução via CLI:", e.message || e);
+      return NextResponse.json({ error: e.message }, { status: 500 });
+    }
   }
 
   if (sourceId) {
-    const result = await runCrawlerForSource(sourceId);
-    return NextResponse.json({ result });
+    try {
+      await execAsync(`npx tsx src/crawler/cli.ts --sourceId ${sourceId}`);
+      return NextResponse.json({ message: "SUCCESS" });
+    } catch (e: any) {
+      console.error("Erro na execução via CLI:", e.message || e);
+      return NextResponse.json({ error: e.message }, { status: 500 });
+    }
   }
 
   return NextResponse.json(

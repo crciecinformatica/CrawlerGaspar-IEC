@@ -33,7 +33,6 @@ export default function SourcesPage() {
   const [selectedSource, setSelectedSource] = useState<Source | null>(null);
 
   async function loadSources() {
-    setLoading(true);
     const res = await fetch("/api/sources");
     const data = await res.json();
     setSources(data.sources ?? []);
@@ -43,6 +42,17 @@ export default function SourcesPage() {
   useEffect(() => {
     loadSources();
   }, []);
+
+  // Poll while any crawl is running
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (runningIds.size > 0) {
+      interval = setInterval(() => {
+        loadSources();
+      }, 5000); // Check every 5 seconds
+    }
+    return () => clearInterval(interval);
+  }, [runningIds]);
 
   async function triggerCrawl(sourceId: string) {
     setRunningIds((prev) => new Set(prev).add(sourceId));
@@ -61,6 +71,23 @@ export default function SourcesPage() {
       });
     }
   }
+
+  async function triggerAllCrawls() {
+    const allIds = sources.map((s) => s.id);
+    setRunningIds(new Set(allIds));
+    try {
+      await fetch("/api/crawl/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ all: true }),
+      });
+      await loadSources();
+    } finally {
+      setRunningIds(new Set());
+    }
+  }
+
+  const isAnyRunning = runningIds.size > 0;
 
   function statusIcon(status?: string) {
     if (!status) return <Clock className="h-3.5 w-3.5 text-slate-400" />;
@@ -90,21 +117,16 @@ export default function SourcesPage() {
         total={sources.length}
       >
         <button
-          onClick={() =>
-            fetch("/api/crawl/run", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ all: true }),
-            }).then(loadSources)
-          }
-          className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 transition"
+          onClick={triggerAllCrawls}
+          disabled={isAnyRunning}
+          className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          <Play className="h-4 w-4" />
-          Executar Todos
+          {isAnyRunning ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+          {isAnyRunning ? "Executando..." : "Executar Todos"}
         </button>
       </PageHeader>
 
-      {loading ? (
+      {loading && sources.length === 0 ? (
         <div className="flex items-center justify-center min-h-[200px]">
           <RefreshCw className="h-6 w-6 text-slate-400 animate-spin" />
         </div>
@@ -140,13 +162,15 @@ export default function SourcesPage() {
                       </td>
                       <td className="px-4 py-3 whitespace-nowrap">
                         <div className="flex items-center gap-1.5">
-                          {statusIcon(lastRun?.status)}
-                          <span className={`text-xs ${lastRun?.status === "ERROR" ? "text-red-500" : "text-slate-500 dark:text-slate-400"}`}>
-                            {lastRun
-                              ? lastRun.status === "ERROR"
-                                ? "Erro na Coleta"
-                                : new Date(lastRun.startedAt).toLocaleString("pt-BR")
-                              : "Nunca executado"}
+                          {statusIcon(isRunning ? "RUNNING" : lastRun?.status)}
+                          <span className={`text-xs ${lastRun?.status === "ERROR" && !isRunning ? "text-red-500" : "text-slate-500 dark:text-slate-400"}`}>
+                            {isRunning
+                              ? "Executando..."
+                              : lastRun
+                                ? lastRun.status === "ERROR"
+                                  ? "Erro na Coleta"
+                                  : new Date(lastRun.startedAt).toLocaleString("pt-BR")
+                                : "Nunca executado"}
                           </span>
                         </div>
                       </td>
@@ -168,7 +192,7 @@ export default function SourcesPage() {
                             ) : (
                               <Play className="h-3 w-3" />
                             )}
-                            {isRunning ? "Executando…" : "Executar"}
+                            {isRunning ? "Aguarde…" : "Executar"}
                           </button>
                         </div>
                       </td>

@@ -187,10 +187,18 @@ export async function runCrawlerForSource(sourceId: string): Promise<RunResult> 
     console.log(`\n[Runner] Crawling com Crawlee: ${source.competitor.name} → ${source.url}`);
 
     const rawOffers: RawCourseOffer[] = [];
+    
+    const { MemoryStorage } = await import("@crawlee/memory-storage");
+    const { Configuration } = await import("@crawlee/core");
+    
+    // Configura o Crawlee para usar APENAS memória, sem tocar no disco
+    const config = new Configuration({
+      storageClient: new MemoryStorage({ persistStorage: false }),
+      purgeOnStart: false,
+    });
 
     const crawler = new PlaywrightCrawler({
       requestHandler: async (context) => {
-        // Redefinir pushData para capturar as ofertas em memória
         context.pushData = async (data: any) => {
           rawOffers.push(data as RawCourseOffer);
         };
@@ -199,7 +207,7 @@ export async function runCrawlerForSource(sourceId: string): Promise<RunResult> 
       maxRequestsPerCrawl: 50,
       navigationTimeoutSecs: 60,
       requestHandlerTimeoutSecs: 120,
-    });
+    }, config);
 
     await crawler.run([source.url]);
 

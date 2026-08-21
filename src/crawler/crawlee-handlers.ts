@@ -6,7 +6,7 @@ import { RawCourseOffer } from "./extractors/base";
 // UTILIDADES GLOBAIS DE EXTRAÇÃO DE PREÇO
 // ──────────────────────────────────────────────
 
-const PRICE_REGEX = /R\$\s*\d{1,3}(?:\.\d{3})*,\d{2}/gi;
+const PRICE_REGEX = /R\$\s*\d{1,3}(?:\.\d{3})*(?:,\d{2})?/gi;
 const INSTALLMENT_REGEX = /(\d+)\s*[xX×]\s*(?:de\s*)?R\$\s*([\d.,]+)/i;
 
 export function extractPricesFromText(text: string): {
@@ -183,7 +183,7 @@ export async function handleDescomplica({ page, request, log, pushData }: Playwr
 export async function handlePucrs({ page, request, log, pushData }: PlaywrightCrawlingContext) {
   log.info(`[PUCRS] Extraindo: ${request.url}`);
   
-  await page.waitForTimeout(2000); // Allow content to settle
+  await page.waitForTimeout(4000); // Allow content to settle and prices to load from API
 
   const html = await page.content();
   const $ = cheerio.load(html);
@@ -241,11 +241,47 @@ export async function handlePucrs({ page, request, log, pushData }: PlaywrightCr
   }
 }
 
-export async function handlePucpr({ page, request, log, pushData }: PlaywrightCrawlingContext) {
-  log.info(`[PUCPR] Extraindo: ${request.url}`);
+export async function handlePucpr({ page, request, log, pushData, enqueueLinks }: PlaywrightCrawlingContext) {
+  if (request.userData?.label === 'DETAIL') {
+    log.info(`[PUCPR Deep Crawl] Extraindo detalhes de: ${request.url}`);
+    await page.waitForTimeout(4000); // Aguarda carregamento de scripts/iframes
+    
+    // Extrai texto de todos os frames (PUCPR usa iframes para preços)
+    let fullText = "";
+    for (const frame of page.frames()) {
+      try {
+        const html = await frame.content();
+        const $ = cheerio.load(html);
+        fullText += " " + $("body").text();
+      } catch (e) {
+        // ignora cross-origin frames se não puder ler
+      }
+    }
+    
+    const prices = extractPricesFromText(fullText);
+
+    const offer: RawCourseOffer = request.userData.offer;
+    
+    if (prices.priceRaw) {
+      offer.priceRaw = prices.priceRaw;
+      offer.discountPriceRaw = prices.discountPriceRaw;
+      offer.installmentsRaw = prices.installmentsRaw;
+      if (prices.campaignName) offer.campaignName = prices.campaignName;
+      offer.confidenceScore = 0.8;
+      log.info(`[PUCPR Deep Crawl] Preço encontrado: ${prices.priceRaw}`);
+    } else {
+      log.warning(`[PUCPR Deep Crawl] Preço não encontrado em ${request.url}`);
+    }
+
+    await pushData(offer);
+    return;
+  }
+
+  log.info(`[PUCPR] Extraindo lista: ${request.url}`);
   
   try {
     await page.waitForSelector("a, article, [class*='course']", { timeout: 15000 });
+    await page.waitForTimeout(3000); // Aguarda mais um pouco para injetar o preço na DOM
   } catch (e) {
     log.warning(`[PUCPR] Selector timeout no wait for a, article, course classes.`);
   }
@@ -267,6 +303,8 @@ export async function handlePucpr({ page, request, log, pushData }: PlaywrightCr
     }
   }
 
+  const detailUrlsToQueue: { url: string; offer: RawCourseOffer }[] = [];
+
   if (cards.length === 0) {
     $("a[href*='/pos-graduacao/'], a[href*='/curso/'], a[href*='/mba']").each((_, el) => {
       const text = $(el).text().trim();
@@ -275,6 +313,7 @@ export async function handlePucpr({ page, request, log, pushData }: PlaywrightCr
         seenTitles.add(text);
         const parentText = $(el).parent().text() + " " + $(el).parent().parent().text();
         const prices = extractPricesFromText(parentText);
+        const coursePageUrl = new URL(href, request.url).href;
 
         const offer: RawCourseOffer = {
           title: text,
@@ -282,45 +321,100 @@ export async function handlePucpr({ page, request, log, pushData }: PlaywrightCr
           priceRaw: prices.priceRaw || globalPrices.priceRaw,
           installmentsRaw: prices.installmentsRaw || globalPrices.installmentsRaw,
           sourceUrl: request.url,
-          coursePageUrl: new URL(href, request.url).href,
+          coursePageUrl,
           confidenceScore: prices.priceRaw ? 0.6 : 0.35,
         };
+        
+        if (!offer.priceRaw && coursePageUrl) {
+          detailUrlsToQueue.push({ url: coursePageUrl, offer });
+        } else {
+          pushData(offer);
+        }
+      }
+    });
+  } else {
+    cards.each((_, el) => {
+      const $card = $(el);
+      const title = $card.find("h2, h3, h4, [class*='title']").first().text().trim();
+      if (!title || title.length < 5 || seenTitles.has(title)) return;
+      seenTitles.add(title);
+
+      let priceRaw = $card.find("[class*='preco'], [class*='price'], [class*='valor']").first().text().trim();
+      const cardText = $card.text();
+      const prices = !priceRaw ? extractPricesFromText(cardText) : { priceRaw };
+
+      const modality = $card.find("[class*='modalidade']").first().text().trim() || detectModalityFromText(cardText) || "EAD";
+      const href = $card.attr("href") || $card.find("a").first().attr("href");
+      const coursePageUrl = href ? new URL(href, request.url).href : undefined;
+
+      const offer: RawCourseOffer = {
+        title,
+        modality,
+        priceRaw: prices.priceRaw || undefined,
+        discountPriceRaw: prices.discountPriceRaw,
+        installmentsRaw: prices.installmentsRaw,
+        sourceUrl: request.url,
+        coursePageUrl,
+        confidenceScore: prices.priceRaw ? 0.7 : 0.45,
+      };
+
+      if (!prices.priceRaw && coursePageUrl) {
+        detailUrlsToQueue.push({ url: coursePageUrl, offer });
+      } else {
         pushData(offer);
       }
     });
+  }
+
+  // Enqueue detail pages (limited to avoid too many requests)
+  const toQueue = detailUrlsToQueue.slice(0, 20);
+  if (toQueue.length > 0) {
+    log.info(`[PUCPR] Fila de Deep Crawl: ${toQueue.length} cursos sem preço na lista.`);
+    await enqueueLinks({
+      urls: toQueue.map((item) => item.url),
+      transformRequestFunction(req) {
+        const item = toQueue.find(i => i.url === req.url);
+        req.userData = { label: 'DETAIL', offer: item?.offer };
+        return req;
+      },
+    });
+  }
+}
+
+export async function handleFgv({ page, request, log, pushData, enqueueLinks }: PlaywrightCrawlingContext) {
+  if (request.userData?.label === 'DETAIL') {
+    log.info(`[FGV Deep Crawl] Extraindo detalhes de: ${request.url}`);
+    await page.waitForTimeout(4000);
+    
+    let fullText = "";
+    for (const frame of page.frames()) {
+      try {
+        const html = await frame.content();
+        const $ = cheerio.load(html);
+        fullText += " " + $("body").text();
+      } catch (e) {}
+    }
+    
+    const prices = extractPricesFromText(fullText);
+
+    const offer: RawCourseOffer = request.userData.offer;
+    
+    if (prices.priceRaw) {
+      offer.priceRaw = prices.priceRaw;
+      offer.discountPriceRaw = prices.discountPriceRaw;
+      offer.installmentsRaw = prices.installmentsRaw;
+      if (prices.campaignName) offer.campaignName = prices.campaignName;
+      offer.confidenceScore = 0.8;
+      log.info(`[FGV Deep Crawl] Preço encontrado: ${prices.priceRaw}`);
+    } else {
+      log.warning(`[FGV Deep Crawl] Preço não encontrado em ${request.url}`);
+    }
+
+    await pushData(offer);
     return;
   }
 
-  cards.each((_, el) => {
-    const $card = $(el);
-    const title = $card.find("h2, h3, h4, [class*='title']").first().text().trim();
-    if (!title || title.length < 5 || seenTitles.has(title)) return;
-    seenTitles.add(title);
-
-    let priceRaw = $card.find("[class*='preco'], [class*='price'], [class*='valor']").first().text().trim();
-    const cardText = $card.text();
-    const prices = !priceRaw ? extractPricesFromText(cardText) : { priceRaw };
-
-    const modality = $card.find("[class*='modalidade']").first().text().trim() || detectModalityFromText(cardText) || "EAD";
-    const href = $card.find("a").first().attr("href");
-
-    const offer: RawCourseOffer = {
-      title,
-      modality,
-      priceRaw: prices.priceRaw || undefined,
-      discountPriceRaw: prices.discountPriceRaw,
-      installmentsRaw: prices.installmentsRaw,
-      sourceUrl: request.url,
-      coursePageUrl: href ? new URL(href, request.url).href : undefined,
-      confidenceScore: prices.priceRaw ? 0.7 : 0.45,
-    };
-    pushData(offer);
-  });
-}
-
-export async function handleFgv({ page, request, log, pushData }: PlaywrightCrawlingContext) {
-  log.info(`[FGV] Extraindo: ${request.url}`);
-  
+  log.info(`[FGV] Extraindo lista: ${request.url}`);
   await page.waitForTimeout(3000); // Give FGV some time to load
 
   const html = await page.content();
@@ -337,6 +431,8 @@ export async function handleFgv({ page, request, log, pushData }: PlaywrightCraw
     }
   }
 
+  const detailUrlsToQueue: { url: string; offer: RawCourseOffer }[] = [];
+
   if (cards.length === 0) {
     $("a[href*='/cursos/'], a[href*='/programas/'], a[href*='/pos-graduacao/']").each((_, el) => {
       const text = $(el).text().trim();
@@ -345,44 +441,69 @@ export async function handleFgv({ page, request, log, pushData }: PlaywrightCraw
         seenTitles.add(text);
         const parentText = $(el).parent().text() + " " + $(el).parent().parent().text();
         const prices = extractPricesFromText(parentText);
+        const coursePageUrl = new URL(href, request.url).href;
 
         const offer: RawCourseOffer = {
           title: text,
           priceRaw: prices.priceRaw,
           installmentsRaw: prices.installmentsRaw,
           sourceUrl: request.url,
-          coursePageUrl: new URL(href, request.url).href,
+          coursePageUrl,
           confidenceScore: prices.priceRaw ? 0.5 : 0.3,
         };
+        
+        if (!prices.priceRaw) {
+          detailUrlsToQueue.push({ url: coursePageUrl, offer });
+        } else {
+          pushData(offer);
+        }
+      }
+    });
+  } else {
+    cards.each((_, el) => {
+      const $card = $(el);
+      const title = $card.find("h2, h3, h4, .field-title, [class*='title']").first().text().trim();
+      if (!title || title.length < 5 || seenTitles.has(title)) return;
+      seenTitles.add(title);
+
+      let priceRaw = $card.find("[class*='price'], [class*='valor'], [class*='invest']").first().text().trim();
+      const cardText = $card.text();
+      const prices = !priceRaw ? extractPricesFromText(cardText) : { priceRaw };
+
+      const modality = $card.find("[class*='modalidade'], .field-modalidade").first().text().trim() || detectModalityFromText(cardText);
+      const href = $card.attr("href") || $card.find("a[href]").first().attr("href");
+      const coursePageUrl = href ? new URL(href, request.url).href : undefined;
+
+      const offer: RawCourseOffer = {
+        title,
+        modality: modality || undefined,
+        priceRaw: prices.priceRaw || undefined,
+        discountPriceRaw: prices.discountPriceRaw,
+        installmentsRaw: prices.installmentsRaw,
+        sourceUrl: request.url,
+        coursePageUrl,
+        confidenceScore: prices.priceRaw ? 0.7 : 0.45,
+      };
+
+      if (!prices.priceRaw && coursePageUrl) {
+        detailUrlsToQueue.push({ url: coursePageUrl, offer });
+      } else {
         pushData(offer);
       }
     });
-    return;
   }
 
-  cards.each((_, el) => {
-    const $card = $(el);
-    const title = $card.find("h2, h3, h4, .field-title, [class*='title']").first().text().trim();
-    if (!title || title.length < 5 || seenTitles.has(title)) return;
-    seenTitles.add(title);
-
-    let priceRaw = $card.find("[class*='price'], [class*='valor'], [class*='invest']").first().text().trim();
-    const cardText = $card.text();
-    const prices = !priceRaw ? extractPricesFromText(cardText) : { priceRaw };
-
-    const modality = $card.find("[class*='modalidade'], .field-modalidade").first().text().trim() || detectModalityFromText(cardText);
-    const href = $card.find("a[href]").first().attr("href");
-
-    const offer: RawCourseOffer = {
-      title,
-      modality: modality || undefined,
-      priceRaw: prices.priceRaw || undefined,
-      discountPriceRaw: prices.discountPriceRaw,
-      installmentsRaw: prices.installmentsRaw,
-      sourceUrl: request.url,
-      coursePageUrl: href ? new URL(href, request.url).href : undefined,
-      confidenceScore: prices.priceRaw ? 0.7 : 0.45,
-    };
-    pushData(offer);
-  });
+  // Enqueue detail pages (limited to avoid too many requests)
+  const toQueue = detailUrlsToQueue.slice(0, 20);
+  if (toQueue.length > 0) {
+    log.info(`[FGV] Fila de Deep Crawl: ${toQueue.length} cursos sem preço na lista.`);
+    await enqueueLinks({
+      urls: toQueue.map((item) => item.url),
+      transformRequestFunction(req) {
+        const item = toQueue.find(i => i.url === req.url);
+        req.userData = { label: 'DETAIL', offer: item?.offer };
+        return req;
+      },
+    });
+  }
 }
