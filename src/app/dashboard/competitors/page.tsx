@@ -42,7 +42,6 @@ export default function CompetitorsPage() {
   const [editingCompetitor, setEditingCompetitor] = useState<Competitor | null>(null);
 
   async function load() {
-    setLoading(true);
     const res = await fetch("/api/competitors");
     const data = await res.json();
     setCompetitors(data.competitors ?? []);
@@ -51,24 +50,40 @@ export default function CompetitorsPage() {
 
   useEffect(() => { load(); }, []);
 
+  const isAnyRunning = competitors.some(c => c.lastCrawl?.status === "RUNNING");
+
+  // Poll while any crawl is actually RUNNING in the backend
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (isAnyRunning || runningIds.size > 0) {
+      interval = setInterval(() => {
+        load();
+      }, 3000);
+    }
+    return () => clearInterval(interval);
+  }, [isAnyRunning, runningIds]);
+
   async function crawlAll(competitorId: string) {
     setRunningIds((prev) => new Set(prev).add(competitorId));
-    // Busca fontes do concorrente e dispara cada uma
-    const res = await fetch(`/api/sources?competitorId=${competitorId}`);
-    const data = await res.json();
-    for (const src of data.sources ?? []) {
-      await fetch("/api/crawl/run", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sourceId: src.id }),
+    try {
+      // Busca fontes do concorrente e dispara cada uma
+      const res = await fetch(`/api/sources?competitorId=${competitorId}`);
+      const data = await res.json();
+      for (const src of data.sources ?? []) {
+        await fetch("/api/crawl/run", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sourceId: src.id }),
+        });
+      }
+      setTimeout(load, 500);
+    } finally {
+      setRunningIds((prev) => {
+        const next = new Set(prev);
+        next.delete(competitorId);
+        return next;
       });
     }
-    await load();
-    setRunningIds((prev) => {
-      const next = new Set(prev);
-      next.delete(competitorId);
-      return next;
-    });
   }
 
   const handleDelete = async (id: string) => {

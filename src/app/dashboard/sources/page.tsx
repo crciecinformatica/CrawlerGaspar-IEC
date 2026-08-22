@@ -43,16 +43,18 @@ export default function SourcesPage() {
     loadSources();
   }, []);
 
-  // Poll while any crawl is running
+  const isAnyRunning = sources.some(s => s.crawlRuns[0]?.status === "RUNNING");
+
+  // Poll while any crawl is actually RUNNING in the backend
   useEffect(() => {
     let interval: NodeJS.Timeout;
-    if (runningIds.size > 0) {
+    if (isAnyRunning || runningIds.size > 0) {
       interval = setInterval(() => {
         loadSources();
-      }, 5000); // Check every 5 seconds
+      }, 3000);
     }
     return () => clearInterval(interval);
-  }, [runningIds]);
+  }, [isAnyRunning, runningIds]);
 
   async function triggerCrawl(sourceId: string) {
     setRunningIds((prev) => new Set(prev).add(sourceId));
@@ -62,7 +64,8 @@ export default function SourcesPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ sourceId }),
       });
-      await loadSources();
+      // Allow some time for backend to create the CrawlRun before reloading
+      setTimeout(loadSources, 500); 
     } finally {
       setRunningIds((prev) => {
         const next = new Set(prev);
@@ -81,13 +84,11 @@ export default function SourcesPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ all: true }),
       });
-      await loadSources();
+      setTimeout(loadSources, 500);
     } finally {
       setRunningIds(new Set());
     }
   }
-
-  const isAnyRunning = runningIds.size > 0;
 
   function statusIcon(status?: string) {
     if (!status) return <Clock className="h-3.5 w-3.5 text-slate-400" />;

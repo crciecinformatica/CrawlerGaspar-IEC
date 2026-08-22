@@ -1,31 +1,33 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { exec } from "child_process";
-import { promisify } from "util";
-
-const execAsync = promisify(exec);
+import { runAllActiveSources, runCrawlerForSource } from "@/crawler/runner";
 
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}));
   const { sourceId, all } = body as { sourceId?: string; all?: boolean };
 
   if (all) {
-    // Fire and forget, or wait for it. We will wait so UI can poll correctly.
     try {
-      await execAsync("npx tsx src/crawler/cli.ts");
+      // Dispara em background (fire and forget)
+      runAllActiveSources().catch((e) => {
+        console.error("Erro na execução do crawler em background:", e.message || e);
+      });
       return NextResponse.json({ message: "SUCCESS" });
     } catch (e: any) {
-      console.error("Erro na execução via CLI:", e.message || e);
+      console.error("Erro ao iniciar crawler:", e.message || e);
       return NextResponse.json({ error: e.message }, { status: 500 });
     }
   }
 
   if (sourceId) {
     try {
-      await execAsync(`npx tsx src/crawler/cli.ts --sourceId ${sourceId}`);
+      // Dispara em background
+      runCrawlerForSource(sourceId).catch((e) => {
+        console.error("Erro na execução do crawler em background:", e.message || e);
+      });
       return NextResponse.json({ message: "SUCCESS" });
     } catch (e: any) {
-      console.error("Erro na execução via CLI:", e.message || e);
+      console.error("Erro ao iniciar crawler:", e.message || e);
       return NextResponse.json({ error: e.message }, { status: 500 });
     }
   }
